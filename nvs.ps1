@@ -1,6 +1,6 @@
 # NVS (Node Version Switcher) PowerShell script
 # Bootstraps node binary if necessary, then forwards arguments to the main nvs.js script.
-
+$questionMark = $?
 $scriptDir = $PSScriptRoot
 $mainScript = Join-Path $scriptDir "lib/index.js"
 $onWindows = $IsWindows -or $PSVersionTable.PSVersion.Major -le 5
@@ -85,9 +85,10 @@ if ($args -eq "bootstrap") {
 	exit 0
 }
 elseif ($args -eq "prompt") {
-	# This script was invoked as a PS prompt function that enables auto-switching.
-	Invoke-Expression $env:NVS_ORIGINAL_PROMPT
-
+	$lec = if($questionMark -eq $false) {$global:LASTEXITCODE} Else {0}
+	if(($lec -eq 0) -and ($questionMark -eq $false)){
+	$lec = 1
+	}
 	# Find the nearest .node-version file in current or parent directories
 	for ($parentDir = $pwd.Path; $parentDir; $parentDir = Split-Path $parentDir) {
 		if ((Test-Path (Join-Path $parentDir ".node-version") -PathType Leaf) -or (Test-Path (Join-Path $parentDir ".nvmrc") -PathType Leaf)) { break }
@@ -95,7 +96,7 @@ elseif ($args -eq "prompt") {
 
 	# If it's still the same as the last auto-switched directory, then there's nothing to do.
 	if ([string]$parentDir -eq [string]$env:NVS_AUTO_DIRECTORY) {
-		exit 0
+		exit $lec
 	}
 	$env:NVS_AUTO_DIRECTORY = $parentDir
 
@@ -109,8 +110,8 @@ elseif ($args -eq "prompt") {
 	while (($b = $proc.StandardOutput.Read()) -ne -1) {
 		Write-Host -NoNewline ([char]$b)
 	}
-	$proc.WaitForExit
-	$exitCode = $proc.ExitCode
+	$proc.WaitForExit()
+	$exitCode = $lec
 }
 else {
 	# Forward the args to the main JavaScript file.
