@@ -1,6 +1,7 @@
 # NVS (Node Version Switcher) PowerShell script
 # Bootstraps node binary if necessary, then forwards arguments to the main nvs.js script.
-$questionMark = $?
+$lastCommandSuccess = $?
+$originalExitCode = $global:LASTEXITCODE
 $scriptDir = $PSScriptRoot
 $mainScript = Join-Path $scriptDir "lib/index.js"
 $onWindows = $IsWindows -or $PSVersionTable.PSVersion.Major -le 5
@@ -85,9 +86,17 @@ if ($args -eq "bootstrap") {
 	exit 0
 }
 elseif ($args -eq "prompt") {
-	$lec = if($questionMark -eq $false) {$global:LASTEXITCODE} Else {0}
-	if(($lec -eq 0) -and ($questionMark -eq $false)){
-	$lec = 1
+	$lastHistory = Get-History -ErrorAction Ignore -Count 1
+	if(!$lastCommandSuccess){
+		$exitCode = 0
+		$invocationInfo = try {
+		$global:Error[0] | Where-Object { $_ -ne $null } | Select-Object -ExpandProperty InvocationInfo
+		} catch { $null }
+		if ($null -ne $invocationInfo -and $lastHistory.CommandLine -eq $invocationInfo.Line) {
+			$exitCode = 1
+		} elseif ($originalExitCode -is [int] -and $originalExitCode -ne 0) {
+			$exitCode = $originalExitCode
+		}
 	}
 	# Find the nearest .node-version file in current or parent directories
 	for ($parentDir = $pwd.Path; $parentDir; $parentDir = Split-Path $parentDir) {
@@ -96,9 +105,10 @@ elseif ($args -eq "prompt") {
 
 	# If it's still the same as the last auto-switched directory, then there's nothing to do.
 	if ([string]$parentDir -eq [string]$env:NVS_AUTO_DIRECTORY) {
-		exit $lec
+		exit $exitCode
 	}
 	$env:NVS_AUTO_DIRECTORY = $parentDir
+	
 
 	# Output needs to be redirected to Write-Host, because stdout is ignored by prompt.
 	# Process a byte at a time so that output like progress bars is real-time.
@@ -111,7 +121,11 @@ elseif ($args -eq "prompt") {
 		Write-Host -NoNewline ([char]$b)
 	}
 	$proc.WaitForExit()
-	$exitCode = $lec
+
+	if($proc.ExitCode -is [int] -and $proc.ExitCode -eq 2){
+		$backUpExitCode = $exitCode
+		$exitCode = $proc.ExitCode
+	}
 }
 else {
 	# Forward the args to the main JavaScript file.
@@ -123,7 +137,11 @@ if ($exitCode -eq 2) {
 	# The bootstrap node version is wrong. Delete it and start over.
 	Remove-Item "$bootstrapNodePath"
 	. "$scriptDir/nvs.ps1" $args
-	$exitCode = $LastExitCode
+	if($null -ne $backUpExitCode){
+		$exitCode = $backupExitCode
+	}else {
+		$exitCode = $LastExitCode
+	}
 }
 
 # Call the post-invocation script if it is present, then delete it.
